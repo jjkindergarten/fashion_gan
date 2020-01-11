@@ -47,6 +47,25 @@ def train_step(generator, discriminator, generator_optimizer, discriminator_opti
 
     return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
 
+@tf.function
+def train_step_G(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim):
+    noise = tf.random.normal([images.shape[0], noise_dim])
+
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        generated_images = generator(noise, training=True)
+
+        real_output = discriminator(images, training=False)
+        fake_output = discriminator(generated_images, training=False)
+
+        gen_loss = generator_loss(fake_output)
+        disc_loss = discriminator_loss(real_output, fake_output)
+
+    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+
+    generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+
+    return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
+
 
 def generate_and_save_images(model, epoch, test_input, save_path):
     # Notice `training` is set to False.
@@ -70,9 +89,15 @@ def train(generator, discriminator, generator_optimizer, discriminator_optimizer
     for epoch in range(epochs):
         start = time.time()
         print('G_Loss', 'D_Loss', 'D_real', 'D_fake')
+        i = 0
         for image_batch in dataset:
-            gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
-                                                                   discriminator_optimizer, image_batch, noise_dim)
+            if i % 2 == 0:
+                gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
+                                                                       discriminator_optimizer, image_batch, noise_dim)
+            else:
+                gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
+                                                                       discriminator_optimizer, image_batch, noise_dim)
+
             print(gen_loss.numpy(), disc_loss.numpy(), real_mean.numpy(), fake_mean.numpy())
 
         generate_and_save_images(generator, epoch, seed, save_path)
@@ -94,8 +119,8 @@ if __name__ == "__main__":
     EPOCHS = 50
     noise_dim = 100
     num_examples_to_generate = 16
- ### sigmod discriminaotor ##########
-    test_num = 6
+
+    test_num = 8
     SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
 
     if not os.path.exists(SAVE_PATH):
@@ -124,7 +149,7 @@ if __name__ == "__main__":
     decision = discriminator(generated_image)
     print(decision)
 
-    generator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
+    generator_optimizer = tf.keras.optimizers.Adam(4*1e-4)
     discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
 
     # save checkpoint
