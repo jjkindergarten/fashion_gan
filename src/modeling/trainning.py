@@ -7,7 +7,9 @@ import PIL
 from tensorflow.keras import layers
 import time
 from src.modeling.ConGAN import make_generator_model
-from src.modeling.ConGAN import make_discriminator_model, make_generator_model
+from src.modeling.ConGAN import make_discriminator_model, make_generator_model, make_discriminator_model_sigmoid, \
+    make_generator_model_relu
+
 
 
 
@@ -43,6 +45,8 @@ def train_step(generator, discriminator, generator_optimizer, discriminator_opti
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
+    return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
+
 
 def generate_and_save_images(model, epoch, test_input, save_path):
     # Notice `training` is set to False.
@@ -61,14 +65,17 @@ def generate_and_save_images(model, epoch, test_input, save_path):
 
 
 
-def train(generator, seed, dataset, epochs, checkpoint, checkpoint_prefix):
+def train(generator, discriminator, generator_optimizer, discriminator_optimizer,
+          seed, dataset, epochs, checkpoint, checkpoint_prefix, save_path, noise_dim):
     for epoch in range(epochs):
         start = time.time()
-
+        print('G_Loss', 'D_Loss', 'D_real', 'D_fake')
         for image_batch in dataset:
-            train_step(image_batch)
+            gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
+                                                                   discriminator_optimizer, image_batch, noise_dim)
+            print(gen_loss.numpy(), disc_loss.numpy(), real_mean.numpy(), fake_mean.numpy())
 
-            generate_and_save_images(generator, epoch + 1, seed)
+        generate_and_save_images(generator, epoch, seed, save_path)
 
         # Save the model every 15 epochs
         if (epoch + 1) % 15 == 0:
@@ -77,7 +84,7 @@ def train(generator, seed, dataset, epochs, checkpoint, checkpoint_prefix):
         print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
 
     # Generate after the final epoch
-    generate_and_save_images(generator, epochs, seed)
+    generate_and_save_images(generator, epochs, seed, save_path)
 
 
 if __name__ == "__main__":
@@ -87,13 +94,19 @@ if __name__ == "__main__":
     EPOCHS = 50
     noise_dim = 100
     num_examples_to_generate = 16
-    test_num = 2
-    SAVE_PATH = './result/MINIST/res_{}'.format(2)
+ ### sigmod discriminaotor ##########
+    test_num = 6
+    SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
+
+    if not os.path.exists(SAVE_PATH):
+        os.makedirs(SAVE_PATH)
 
     seed = tf.random.normal([num_examples_to_generate, noise_dim])
 
     # load data
-    (train_images, train_labels), (_, _) = tf.keras.datasets.mnist.load_data()
+    # (train_images, train_labels), (_, _) = tf.keras.datasets.mnist.load_data()
+    (train_images, train_labels), (_, _) = tf.keras.datasets.fashion_mnist.load_data()
+
 
     train_images = train_images.reshape(train_images.shape[0], 28, 28, 1).astype('float32')
     train_images = (train_images - 127.5) / 127.5  # Normalize the images to [-1, 1]
@@ -102,23 +115,29 @@ if __name__ == "__main__":
     train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
     generator = make_generator_model()
-    discriminator = make_discriminator_model()
+    discriminator = make_discriminator_model_sigmoid()
 
     noise = tf.random.normal([1, 100])
     generated_image = generator(noise, training=False)
     plt.imshow(generated_image[0, :, :, 0], cmap='gray')
+
     decision = discriminator(generated_image)
     print(decision)
 
-    generator_optimizer = tf.keras.optimizers.Adam(1e-4)
-    discriminator_optimizer = tf.keras.optimizers.Adam(1e-4)
+    generator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
+    discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
 
     # save checkpoint
-    checkpoint_dir = './result/training_checkpoints'
+    checkpoint_dir = os.path.join(SAVE_PATH, 'training_checkpoints')
     checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
     checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
                                      discriminator_optimizer=discriminator_optimizer,
                                      generator=generator,
                                      discriminator=discriminator)
 
+    train(generator, discriminator, generator_optimizer, discriminator_optimizer, seed, train_dataset, EPOCHS, checkpoint,
+          checkpoint_prefix, SAVE_PATH, noise_dim)
+
+    generator.save(os.path.join(SAVE_PATH, 'generator.h5'))
+    discriminator.save(os.path.join(SAVE_PATH, 'discriminator.h5'))
 
