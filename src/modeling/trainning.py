@@ -8,7 +8,9 @@ from tensorflow.keras import layers
 import time
 from src.modeling.ConGAN import make_generator_model
 from src.modeling.ConGAN import make_discriminator_model, make_generator_model, make_discriminator_model_sigmoid, \
-    make_generator_model_relu
+    make_generator_model_relu, make_discriminator_model_layernorm
+import pandas as pd
+from functools import partial
 
 
 
@@ -25,6 +27,31 @@ def generator_loss(fake_output):
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 
     return cross_entropy(tf.ones_like(fake_output), fake_output)
+
+@tf.function
+def train_step_wgan(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim,
+                    grad_penalty_weight = 10):
+    noise = tf.random.normal([images.shape[0], noise_dim])
+
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        generated_images = generator(noise, training=True)
+
+        real_output = discriminator(images, training=True)
+        fake_output = discriminator(generated_images, training=True)
+
+        gen_loss = generator_loss(fake_output)
+        disc_loss = discriminator_loss(real_output, fake_output)
+
+        gp = gradient_penalty(partial(discriminator, training=True), images, generated_images)
+        disc_loss += grad_penalty_weight * gp
+
+    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+    gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
+
+    generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+    discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
+
+    return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
 
 @tf.function
 def train_step(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim):
@@ -67,6 +94,25 @@ def train_step_G(generator, discriminator, generator_optimizer, discriminator_op
     return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
 
 
+def gradient_penalty(f, real, fake=None):
+    def _interpolate(a, b=None):
+        shape = [tf.shape(a)[0]] + [1] * (a.shape.ndims - 1)
+        alpha = tf.random.uniform(shape=shape, minval=0., maxval=1.)
+        inter = a + alpha * (b - a)
+        inter.set_shape(a.shape)
+        return inter
+
+    x = _interpolate(real, fake)
+    with tf.GradientTape() as t:
+        t.watch(x)
+        pred = f(x)
+    grad = t.gradient(pred, x)
+    norm = tf.norm(tf.reshape(grad, [tf.shape(grad)[0], -1]), axis=1)
+    gp = tf.reduce_mean((norm - 1.)**2)
+
+    return gp
+
+
 def generate_and_save_images(model, epoch, test_input, save_path):
     # Notice `training` is set to False.
     # This is so all layers run in inference mode (batchnorm).
@@ -86,24 +132,28 @@ def generate_and_save_images(model, epoch, test_input, save_path):
 
 def train(generator, discriminator, generator_optimizer, discriminator_optimizer,
           seed, dataset, epochs, checkpoint, checkpoint_prefix, save_path, noise_dim):
-    for epoch in range(epochs):
+    for epoch in range(41, epochs):
         start = time.time()
         print('G_Loss', 'D_Loss', 'D_real', 'D_fake')
         i = 0
+        loss_list = []
         for image_batch in dataset:
-            if i % 2 == 0:
+            if i % 4 == 0:
                 gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
             else:
                 gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
+            loss_list.append([1,2,3,4])
 
             print(gen_loss.numpy(), disc_loss.numpy(), real_mean.numpy(), fake_mean.numpy())
 
         generate_and_save_images(generator, epoch, seed, save_path)
+        loss_db = pd.DataFrame(loss_list, columns=['G_Loss', 'D_Loss', 'D_real', 'D_fake'])
+        loss_db.to_csv(os.path.join(save_path, 'loss_db_{}.csv'.format(epoch)))
 
-        # Save the model every 15 epochs
-        if (epoch + 1) % 15 == 0:
+        # Save the model weight every 10 epochs
+        if (epoch + 1) % 5 == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
 
         print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
@@ -116,11 +166,11 @@ if __name__ == "__main__":
 
     BUFFER_SIZE = 60000
     BATCH_SIZE = 256
-    EPOCHS = 50
+    EPOCHS = 80
     noise_dim = 100
     num_examples_to_generate = 16
 
-    test_num = 8
+    test_num = 9
     SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
 
     if not os.path.exists(SAVE_PATH):
@@ -149,7 +199,7 @@ if __name__ == "__main__":
     decision = discriminator(generated_image)
     print(decision)
 
-    generator_optimizer = tf.keras.optimizers.Adam(4*1e-4)
+    generator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
     discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
 
     # save checkpoint
@@ -159,6 +209,7 @@ if __name__ == "__main__":
                                      discriminator_optimizer=discriminator_optimizer,
                                      generator=generator,
                                      discriminator=discriminator)
+    checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
     train(generator, discriminator, generator_optimizer, discriminator_optimizer, seed, train_dataset, EPOCHS, checkpoint,
           checkpoint_prefix, SAVE_PATH, noise_dim)
