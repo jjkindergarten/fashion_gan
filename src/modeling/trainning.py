@@ -16,14 +16,18 @@ from functools import partial
 
 
 def discriminator_loss(real_output, fake_output):
+    # loss function of discriminator
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-
+    # for the real image, the loss is the distance between 1 and the classification of all real image
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+    # for the fake image, the loss is the distance between 0 and the classification of all fake image
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
     total_loss = real_loss + fake_loss
     return total_loss
 
 def generator_loss(fake_output):
+    # for the generator, the loss is the distance between 1 and the classification of fake image
+    # i think with the loss function using sigmoid to outcome probability from discrminator makes more sense
     cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 
     return cross_entropy(tf.ones_like(fake_output), fake_output)
@@ -42,6 +46,7 @@ def train_step_wgan(generator, discriminator, generator_optimizer, discriminator
         gen_loss = generator_loss(fake_output)
         disc_loss = discriminator_loss(real_output, fake_output)
 
+        # gradient penalty here (the only difference)
         gp = gradient_penalty(partial(discriminator, training=True), images, generated_images)
         disc_loss += grad_penalty_weight * gp
 
@@ -51,10 +56,12 @@ def train_step_wgan(generator, discriminator, generator_optimizer, discriminator
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
+    # return these values to monitor the process of training
     return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
 
 @tf.function
 def train_step(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim):
+    # train generator and discriminator simatelously
     noise = tf.random.normal([images.shape[0], noise_dim])
 
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
@@ -76,6 +83,10 @@ def train_step(generator, discriminator, generator_optimizer, discriminator_opti
 
 @tf.function
 def train_step_G(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim):
+    # train generator only
+    # in some code i saw, some separately the training function of G and D.
+    # In this way, G and D use different noise to generate fake image
+    # does this help ?
     noise = tf.random.normal([images.shape[0], noise_dim])
 
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
@@ -95,6 +106,8 @@ def train_step_G(generator, discriminator, generator_optimizer, discriminator_op
 
 
 def gradient_penalty(f, real, fake=None):
+    # this part i dont fully understand
+    # but seems like it measures the distance between fake and real images ?
     def _interpolate(a, b=None):
         shape = [tf.shape(a)[0]] + [1] * (a.shape.ndims - 1)
         alpha = tf.random.uniform(shape=shape, minval=0., maxval=1.)
@@ -115,7 +128,7 @@ def gradient_penalty(f, real, fake=None):
 
 def generate_and_save_images(model, epoch, test_input, save_path):
     # Notice `training` is set to False.
-    # This is so all layers run in inference mode (batchnorm).
+    # This is so all layers run in inference mode (batchnorm)
     predictions = model(test_input, training=False)
 
     fig = plt.figure(figsize=(4,4))
@@ -132,27 +145,29 @@ def generate_and_save_images(model, epoch, test_input, save_path):
 
 def train(generator, discriminator, generator_optimizer, discriminator_optimizer,
           seed, dataset, epochs, checkpoint, checkpoint_prefix, save_path, noise_dim):
-    for epoch in range(41, epochs):
+    for epoch in range(epochs):
         start = time.time()
         print('G_Loss', 'D_Loss', 'D_real', 'D_fake')
         i = 0
         loss_list = []
         for image_batch in dataset:
+            # change the number below help adjust the frequency of update of discriminator per update of generator
             if i % 4 == 0:
                 gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
             else:
                 gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
-            loss_list.append([1,2,3,4])
+            loss_list.append([gen_loss.numpy(),disc_loss.numpy(),real_mean.numpy(),fake_mean.numpy()])
 
             print(gen_loss.numpy(), disc_loss.numpy(), real_mean.numpy(), fake_mean.numpy())
 
         generate_and_save_images(generator, epoch, seed, save_path)
+        # save the learning process data
         loss_db = pd.DataFrame(loss_list, columns=['G_Loss', 'D_Loss', 'D_real', 'D_fake'])
         loss_db.to_csv(os.path.join(save_path, 'loss_db_{}.csv'.format(epoch)))
 
-        # Save the model weight every 10 epochs
+        # Save the model weight every 5 epochs
         if (epoch + 1) % 5 == 0:
             checkpoint.save(file_prefix = checkpoint_prefix)
 
@@ -170,7 +185,7 @@ if __name__ == "__main__":
     noise_dim = 100
     num_examples_to_generate = 16
 
-    test_num = 9
+    test_num = 12
     SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
 
     if not os.path.exists(SAVE_PATH):
@@ -209,7 +224,7 @@ if __name__ == "__main__":
                                      discriminator_optimizer=discriminator_optimizer,
                                      generator=generator,
                                      discriminator=discriminator)
-    checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+    # checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
     train(generator, discriminator, generator_optimizer, discriminator_optimizer, seed, train_dataset, EPOCHS, checkpoint,
           checkpoint_prefix, SAVE_PATH, noise_dim)
