@@ -144,7 +144,7 @@ def generate_and_save_images(model, epoch, test_input, save_path):
 
 
 def train(generator, discriminator, generator_optimizer, discriminator_optimizer,
-          seed, dataset, epochs, checkpoint, checkpoint_prefix, save_path, noise_dim):
+          seed, dataset, epochs, checkpoint, checkpoint_prefix, save_path, noise_dim, d_update_freq = 4, wgan = False):
     for epoch in range(epochs):
         start = time.time()
         print('G_Loss', 'D_Loss', 'D_real', 'D_fake')
@@ -152,9 +152,14 @@ def train(generator, discriminator, generator_optimizer, discriminator_optimizer
         loss_list = []
         for image_batch in dataset:
             # change the number below help adjust the frequency of update of discriminator per update of generator
-            if i % 4 == 0:
-                gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator, generator_optimizer,
+            if i % d_update_freq == 0:
+                if wgan:
+                    gen_loss, disc_loss, real_mean, fake_mean = train_step_wgan(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
+                else:
+                    gen_loss, disc_loss, real_mean, fake_mean = train_step(generator, discriminator,
+                                                                                generator_optimizer,discriminator_optimizer,
+                                                                                image_batch, noise_dim)
             else:
                 gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
@@ -185,6 +190,7 @@ if __name__ == "__main__":
     noise_dim = 100
     num_examples_to_generate = 16
 
+    # change the num of test_num for each task, would help save result in different folder
     test_num = 12
     SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
 
@@ -204,6 +210,10 @@ if __name__ == "__main__":
     # Batch and shuffle the data
     train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 
+    #
+    # generator = make_generator_model_relu()              # use this generator for task 7
+    # discriminator = make_discriminator_model_sigmoid()  # use this discriminator for task 6
+    # discriminator = make_discriminator_model_layernorm() # use this discriminator for task 11
     generator = make_generator_model()
     discriminator = make_discriminator_model_sigmoid()
 
@@ -214,6 +224,7 @@ if __name__ == "__main__":
     decision = discriminator(generated_image)
     print(decision)
 
+    # change the learning rate here
     generator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
     discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
 
@@ -226,8 +237,10 @@ if __name__ == "__main__":
                                      discriminator=discriminator)
     # checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
+    # set wgan = True for task 10 and 11
+    # set d_update_freq = 4 for task 9
     train(generator, discriminator, generator_optimizer, discriminator_optimizer, seed, train_dataset, EPOCHS, checkpoint,
-          checkpoint_prefix, SAVE_PATH, noise_dim)
+          checkpoint_prefix, SAVE_PATH, noise_dim, d_update_freq = 4, wgan = False)
 
     generator.save(os.path.join(SAVE_PATH, 'generator.h5'))
     discriminator.save(os.path.join(SAVE_PATH, 'discriminator.h5'))
