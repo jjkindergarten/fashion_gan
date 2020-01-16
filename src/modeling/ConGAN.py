@@ -38,6 +38,38 @@ def make_generator_model():
 
     return model
 
+def make_generator_model2():
+    """
+    this code is copied from https://www.tensorflow.org/tutorials/generative/dcgan
+    make no change
+    :return:
+    """
+    model = tf.keras.Sequential()
+    # the input noise first passed by a dense layer
+    model.add(layers.Dense(7*7*512, use_bias=False, input_shape=(100,)))
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Reshape((7, 7, 512)))
+    assert model.output_shape == (None, 7, 7, 512) # Note: None is the batch size
+
+    model.add(layers.Conv2DTranspose(256, (5, 5), strides=(1, 1), padding='same', use_bias=False))
+    assert model.output_shape == (None, 7, 7, 256)
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Conv2DTranspose(128, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, 14, 14, 128)
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    model.add(layers.Conv2DTranspose(1, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
+    assert model.output_shape == (None, 28, 28, 1)
+
+    return model
+
+
+
 def make_generator_model_relu():
     """
     this function change the leakyrelu of function 'make_generator_model' to relu,
@@ -75,6 +107,7 @@ def make_discriminator_model():
     :return:
     """
     model = tf.keras.Sequential()
+
     model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
                                      input_shape=[28, 28, 1]))
     model.add(layers.LeakyReLU())
@@ -133,6 +166,30 @@ def make_discriminator_model_layernorm():
     model.add(layers.Flatten())
     model.add(layers.LayerNormalization())
     model.add(layers.Dense(1))
+
+    return model
+
+
+def make_discriminator_model_sigmoid2():
+    """
+    This function add sigmoid activation function to the last layer and batch normalization to each layer
+    :return:
+    """
+
+    model = tf.keras.Sequential()
+    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
+                                     input_shape=[28, 28, 1]))
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same'))
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout(0.3))
+
+    model.add(layers.Flatten())
+    model.add(layers.Dense(1, activation='sigmoid'))
 
     return model
 

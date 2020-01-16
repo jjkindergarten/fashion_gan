@@ -8,7 +8,7 @@ from tensorflow.keras import layers
 import time
 from src.modeling.ConGAN import make_generator_model
 from src.modeling.ConGAN import make_discriminator_model, make_generator_model, make_discriminator_model_sigmoid, \
-    make_generator_model_relu, make_discriminator_model_layernorm
+    make_generator_model_relu, make_discriminator_model_layernorm, make_discriminator_model_sigmoid2, make_generator_model2
 import pandas as pd
 from functools import partial
 
@@ -43,8 +43,8 @@ def train_step_wgan(generator, discriminator, generator_optimizer, discriminator
         real_output = discriminator(images, training=True)
         fake_output = discriminator(generated_images, training=True)
 
-        gen_loss = generator_loss(fake_output)
-        disc_loss = discriminator_loss(real_output, fake_output)
+        gen_loss = -tf.reduce_mean(fake_output)
+        disc_loss = tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
 
         # gradient penalty here (the only difference)
         gp = gradient_penalty(partial(discriminator, training=True), images, generated_images)
@@ -97,6 +97,29 @@ def train_step_G(generator, discriminator, generator_optimizer, discriminator_op
 
         gen_loss = generator_loss(fake_output)
         disc_loss = discriminator_loss(real_output, fake_output)
+
+    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+
+    generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+
+    return gen_loss, disc_loss, tf.reduce_mean(real_output), tf.reduce_mean(fake_output)
+
+@tf.function
+def train_step_G_wgan(generator, discriminator, generator_optimizer, discriminator_optimizer, images, noise_dim):
+    # train generator only
+    # in some code i saw, some separately the training function of G and D.
+    # In this way, G and D use different noise to generate fake image
+    # does this help ?
+    noise = tf.random.normal([images.shape[0], noise_dim])
+
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        generated_images = generator(noise, training=True)
+
+        real_output = discriminator(images, training=False)
+        fake_output = discriminator(generated_images, training=False)
+
+        gen_loss = -tf.reduce_mean(fake_output)
+        disc_loss = tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
 
     gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
 
@@ -161,7 +184,11 @@ def train(generator, discriminator, generator_optimizer, discriminator_optimizer
                                                                                 generator_optimizer,discriminator_optimizer,
                                                                                 image_batch, noise_dim)
             else:
-                gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
+                if wgan:
+                    gen_loss, disc_loss, real_mean, fake_mean = train_step_G_wgan(generator, discriminator, generator_optimizer,
+                                                                       discriminator_optimizer, image_batch, noise_dim)
+                else:
+                    gen_loss, disc_loss, real_mean, fake_mean = train_step_G(generator, discriminator, generator_optimizer,
                                                                        discriminator_optimizer, image_batch, noise_dim)
             loss_list.append([gen_loss.numpy(),disc_loss.numpy(),real_mean.numpy(),fake_mean.numpy()])
 
@@ -186,12 +213,12 @@ if __name__ == "__main__":
 
     BUFFER_SIZE = 60000
     BATCH_SIZE = 256
-    EPOCHS = 80
+    EPOCHS = 40
     noise_dim = 100
     num_examples_to_generate = 16
 
     # change the num of test_num for each task, would help save result in different folder
-    test_num = 12
+    test_num = 18
     SAVE_PATH = './result/MINIST/res_{}'.format(test_num)
 
     if not os.path.exists(SAVE_PATH):
@@ -215,7 +242,7 @@ if __name__ == "__main__":
     # discriminator = make_discriminator_model_sigmoid()  # use this discriminator for task 6
     # discriminator = make_discriminator_model_layernorm() # use this discriminator for task 11
     generator = make_generator_model()
-    discriminator = make_discriminator_model_sigmoid()
+    discriminator = make_discriminator_model_layernorm()
 
     noise = tf.random.normal([1, 100])
     generated_image = generator(noise, training=False)
@@ -225,8 +252,8 @@ if __name__ == "__main__":
     print(decision)
 
     # change the learning rate here
-    generator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
-    discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4)
+    generator_optimizer = tf.keras.optimizers.Adam(2*1e-4,  beta_1=0.5)
+    discriminator_optimizer = tf.keras.optimizers.Adam(2*1e-4,  beta_1=0.5)
 
     # save checkpoint
     checkpoint_dir = os.path.join(SAVE_PATH, 'training_checkpoints')
@@ -240,7 +267,7 @@ if __name__ == "__main__":
     # set wgan = True for task 10 and 11
     # set d_update_freq = 4 for task 9
     train(generator, discriminator, generator_optimizer, discriminator_optimizer, seed, train_dataset, EPOCHS, checkpoint,
-          checkpoint_prefix, SAVE_PATH, noise_dim, d_update_freq = 4, wgan = False)
+          checkpoint_prefix, SAVE_PATH, noise_dim, d_update_freq = 1, wgan = True)
 
     generator.save(os.path.join(SAVE_PATH, 'generator.h5'))
     discriminator.save(os.path.join(SAVE_PATH, 'discriminator.h5'))
